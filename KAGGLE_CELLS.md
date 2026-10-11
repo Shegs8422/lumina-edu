@@ -115,9 +115,83 @@ print("train.jsonl OK:", os.path.getsize(
 
 ## Cell 5 — Stage 1: language smoke test  (RUN THIS, SEND ME OUTPUT)
 
+Self-contained on purpose: reads no file from the dataset, so a cached Kaggle
+input cannot make it run a stale copy. Paste this whole cell.
+
 ```python
-src = open(os.path.join(DATA_ROOT, "scripts/smoke_test_language.py")).read()
-exec(compile(src, "smoke_test_language.py", "exec"))
+# ---- Stage 1: can N-ATLaS actually produce Yoruba/Hausa/Igbo? ----
+# Self-contained: no exec(), no __file__, no dataset file reads.
+import json, os, re, unicodedata
+from datetime import datetime
+import torch
+
+MODEL_ID = "NCAIR1/N-ATLaS"
+MARKERS = {
+    "Yoruba": ["ati","ni","ko","wa","fun","won","yi","naa","kini"],
+    "Hausa": ["da","na","ta","ya","ba","sun","kuma","wannan","shi","cikin"],
+    "Igbo":  ["na","ya","ihe","ndi","ka","gi","maka","nke","buru","anyị"],
+}
+
+def strip_accents(t):
+    return "".join(c for c in unicodedata.normalize("NFKD", t or "")
+                   if not unicodedata.combining(c))
+
+# Load one real abstract. Prefer the mounted dataset; fall back to the Hub,
+# which is always the current version.
+rec = None
+for cand in ["/kaggle/input/lumina-edu-data/data/processed/train.jsonl"]:
+    if os.path.exists(cand):
+        with open(cand, encoding="utf-8") as fh:
+            rec = json.loads(fh.readline())
+        print("source:", cand)
+        break
+if rec is None:
+    from huggingface_hub import hf_hub_download
+    p = hf_hub_download("lanre-segun/lumina-edu-nigerian-academic-corpus",
+                        "train.jsonl", repo_type="dataset")
+    with open(p, encoding="utf-8") as fh:
+        rec = json.loads(fh.readline())
+    print("source: Hugging Face Hub (current version)")
+
+print("title:", rec["title"][:90])
+
+from unsloth import FastLanguageModel
+model, tok = FastLanguageModel.from_pretrained(
+    model_name=MODEL_ID, max_seq_length=2048, load_in_4bit=True)
+FastLanguageModel.for_inference(model)
+
+for lang in ["Yoruba", "Hausa", "Igbo"]:
+    msgs = [
+        {"role": "system", "content":
+            f"You are a Nigerian academic translator. Translate the research "
+            f"summary into {lang}. Use natural {lang} prose. Do not add "
+            f"commentary, brackets, or English."},
+        {"role": "user", "content":
+            f"Translate into {lang}:\n\nTitle: {rec['title']}\n"
+            f"Abstract: {rec['abstract'][:700]}"},
+    ]
+    try:
+        text = tok.apply_chat_template(
+            msgs, tokenize=False, add_generation_prompt=True,
+            date_string=datetime.now().strftime("%d %b %Y"))
+    except TypeError:
+        text = tok.apply_chat_template(msgs, tokenize=False,
+                                       add_generation_prompt=True)
+
+    inp = tok(text, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        out = model.generate(**inp, max_new_tokens=200, do_sample=False,
+                             repetition_penalty=1.15)
+    gen = tok.decode(out[0][inp["input_ids"].shape[-1]:],
+                     skip_special_tokens=True).strip()
+
+    toks = set(re.findall(r"[a-zàáèéìíòóùúṣọ]+", strip_accents(gen).lower()))
+    hits = [m for m in MARKERS[lang] if m in toks]
+    print("=" * 70)
+    print(f"{lang}   marker_hits={len(hits)}  {hits[:6]}")
+    print("-" * 70)
+    print(gen[:420])
+    print()
 ```
 
 ---
