@@ -1,0 +1,93 @@
+{
+  "input_files": [
+    "redeemers.jsonl",
+    "ui_ibadan.jsonl"
+  ],
+  "raw_records": 13998,
+  "after_filter": 10971,
+  "dropped_by_filter": {
+    "non_academic_subject": 2388,
+    "non_research_type": 532,
+    "abstract_truncated_garbage": 12,
+    "encoding_damage": 41,
+    "abstract_too_short": 53,
+    "low_alphabetic_ratio": 1
+  },
+  "after_exact_dedupe": 10299,
+  "dropped_exact_dupe": 672,
+  "after_near_dedupe": 10006,
+  "dropped_near_dupe": 293,
+  "near_dupe_threshold": 0.82,
+  "benchmark_size": 610,
+  "train_size": 9196,
+  "dev_size": 200,
+  "benchmark_meets_naic_500": true,
+  "stats": {
+    "train": {
+      "count": 9196,
+      "by_type": {
+        "Article": 8024,
+        "Dissertation": 16,
+        "Book chapter": 281,
+        "Book": 9,
+        "Thesis": 856,
+        "Technical Report": 8,
+        "Dataset": 2
+      },
+      "education_flagged": 4240,
+      "by_institution": {
+        "University of Ibadan": 9196
+      },
+      "year_min": 2018,
+      "year_max": 2026,
+      "median_abstract_chars": 1490
+    },
+    "dev": {
+      "count": 200,
+      "by_type": {
+        "Book": 16,
+        "Book chapter": 5,
+        "Article": 179
+      },
+      "education_flagged": 30,
+      "by_institution": {
+        "University of Ibadan": 200
+      },
+      "year_min": 2018,
+      "year_max": 2025,
+      "median_abstract_chars": 1320
+    },
+    "benchmark": {
+      "count": 610,
+      "by_type": {
+        "Book chapter": 19,
+        "Article": 524,
+        "Book": 2,
+        "Dissertation": 2,
+        "Thesis": 55,
+        "Working Paper": 1,
+        "Technical Report": 2,
+        "Dataset": 2,
+        "In Proceedings": 1,
+        "Book Chapter": 1,
+        "INPROCEEDINGS": 1
+      },
+      "education_flagged": 278,
+      "by_institution": {
+        "Redeemer's University": 283,
+        "University of Ibadan": 327
+      },
+      "year_min": 2018,
+      "year_max": 2026,
+      "median_abstract_chars": 1469
+    }
+  },
+  "split_overlap": {
+    "train&dev": 0,
+    "train&benchmark": 0,
+    "dev&benchmark": 0
+  },
+  "splits_disjoint": true,
+  "max_train_eval_cosine": 0.6861,
+  "train_eval_pairs_above_0.5": 19
+}

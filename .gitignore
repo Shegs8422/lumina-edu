@@ -1,0 +1,36 @@
+# ---- Local config with live credentials: NEVER commit ----
+opencode.json
+opencode.template.json
+.env
+.env.*
+.kaggle/
+
+# ---- Bulk data: published to Hugging Face Hub + Kaggle, not in git ----
+# The repo ships a 50-record sample per split under data/samples/ instead.
+data/raw/
+data/processed/*.jsonl
+data/benchmark/
+data/distilled/
+data/harvest_checkpoint/
+
+# ---- Model artefacts ----
+outputs/
+*.safetensors
+*.bin
+*.gguf
+*.pt
+lumina-edu-natlas-adapter*/
+kaggle_output/
+adapter_model*/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+*.egg-info/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
