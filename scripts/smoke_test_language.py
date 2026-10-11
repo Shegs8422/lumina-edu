@@ -5,7 +5,8 @@ viable and we must fall back to English-only training. This is a cheap check
 (loads the 4-bit model once, generates 3 prompts) that prevents committing
 hours of GPU time to a doomed approach.
 """
-import json, os, re, sys, unicodedata, datetime
+import json, os, re, sys, unicodedata
+from datetime import datetime
 import torch
 
 MODEL_ID = "NCAIR1/N-ATLaS"

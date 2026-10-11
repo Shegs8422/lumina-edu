@@ -221,10 +221,20 @@ def main():
     set_seed()
     print(f"Loading {MODEL_ID} ...")
 
+    # Unsloth defaults to a single GPU when the model fits, which it does in
+    # 4-bit. That wastes the second T4: data-parallel training across both
+    # roughly halves wall-clock. (The generation scripts deliberately do NOT
+    # do this - model-parallel decoding is slower than one GPU with a larger
+    # batch for a model this size.)
+    n_gpu = torch.cuda.device_count()
+    device_map = "unsloth_balanced" if n_gpu > 1 else None
+    print(f"GPUs detected: {n_gpu} | device_map: {device_map or 'single'}")
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_ID,
         max_seq_length=MAX_SEQ_LENGTH,
         load_in_4bit=LOAD_IN_4BIT,
+        device_map=device_map,
     )
 
     model = FastLanguageModel.get_peft_model(
