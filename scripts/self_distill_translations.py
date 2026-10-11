@@ -97,7 +97,7 @@ def load_jsonl(p):
         return [json.loads(l) for l in fh if l.strip()]
 
 
-def build_prompt(title, abstract, language):
+def build_prompt(title, abstract, language, abstract_chars=700):
     return [
         {"role": "system", "content":
             f"You are a Nigerian academic translator. Translate the research "
@@ -105,7 +105,7 @@ def build_prompt(title, abstract, language):
             f"add commentary, brackets, or English. {ATTRIBUTION}"},
         {"role": "user", "content":
             f"Translate this research summary into {language}.\n\n"
-            f"Title: {title}\nAbstract: {abstract[:1800]}"},
+            f"Title: {title}\nAbstract: {abstract[:abstract_chars]}"},
     ]
 
 
@@ -119,73 +119,107 @@ def render(tokenizer, messages):
             messages, tokenize=False, add_generation_prompt=True)
 
 
+def generate_batched(model, tokenizer, jobs, batch_size, max_new_tokens):
+    """Generate translations for a list of (rec, lang, prompt) jobs in batches.
+
+    Batching is the single biggest speed lever here: sequential generation
+    wastes the GPU, because a 4-bit 8B model decoding one short sequence at a
+    time leaves most of the T4 idle. Left-padding is required for correct
+    batched decoding on a decoder-only model.
+    """
+    outs = []
+    n = len(jobs)
+    for start in range(0, n, batch_size):
+        chunk = jobs[start:start + batch_size]
+        prompts = [render(tokenizer, j[2]) for j in chunk]
+        enc = tokenizer(prompts, return_tensors="pt", padding=True,
+                        truncation=True, max_length=MAX_SEQ_LENGTH).to(model.device)
+        with torch.no_grad():
+            gen = model.generate(
+                **enc,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                repetition_penalty=1.15,
+                use_cache=True,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        prompt_len = enc["input_ids"].shape[-1]
+        for row in gen[:, prompt_len:]:
+            outs.append(tokenizer.decode(row, skip_special_tokens=True).strip())
+        done = min(start + batch_size, n)
+        print(f"    generated {done}/{n}", end="\r", flush=True)
+    print()
+    return outs
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default=os.path.join(PROJECT_ROOT, "data", "processed", "train.jsonl"))
     ap.add_argument("--out", default=os.path.join(PROJECT_ROOT, "data", "distilled"))
-    ap.add_argument("--limit", type=int, default=3000, help="records to translate")
-    ap.add_argument("--max-new-tokens", type=int, default=320)
+    ap.add_argument("--limit", type=int, default=1500, help="records to translate")
+    ap.add_argument("--max-new-tokens", type=int, default=200)
+    ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--abstract-chars", type=int, default=700,
+                    help="truncate the abstract before translating; a focused "
+                         "explanation is enough for training and much faster")
     ap.add_argument("--audit-sample", type=int, default=50,
                     help="how many samples to write out for manual review")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
     records = load_jsonl(args.input)[: args.limit]
-    print(f"Distilling {len(records)} records x {len(TARGET_LANGUAGES)} languages")
+    print(f"Distilling {len(records)} records x {len(TARGET_LANGUAGES)} languages "
+          f"= {len(records) * len(TARGET_LANGUAGES)} generations")
+    print(f"batch_size={args.batch_size} max_new_tokens={args.max_new_tokens}")
 
     from unsloth import FastLanguageModel
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_ID, max_seq_length=MAX_SEQ_LENGTH, load_in_4bit=True)
     FastLanguageModel.for_inference(model)
 
+    # Batched decoder-only generation requires left padding and a pad token.
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Build every (record, language, prompt) job up front.
+    jobs = []
+    for rec in records:
+        for lang in TARGET_LANGUAGES:
+            jobs.append((rec, lang, build_prompt(
+                rec["title"], rec["abstract"], lang, args.abstract_chars)))
+
+    texts = generate_batched(model, tokenizer, jobs,
+                             args.batch_size, args.max_new_tokens)
+
     results = []
     audit = []
     dropped = {"degenerate": 0, "wrong_language": 0}
     kept_per_lang = {l: 0 for l in TARGET_LANGUAGES}
 
-    for i, rec in enumerate(records):
-        for lang in TARGET_LANGUAGES:
-            try:
-                prompt = render(tokenizer, build_prompt(rec["title"], rec["abstract"], lang))
-                inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-                with torch.no_grad():
-                    out = model.generate(
-                        **inputs, max_new_tokens=args.max_new_tokens,
-                        do_sample=False, repetition_penalty=1.15, use_cache=True)
-                text = tokenizer.decode(
-                    out[0][inputs["input_ids"].shape[-1]:],
-                    skip_special_tokens=True).strip()
-            except Exception as exc:
-                print(f"  gen error on {rec['id']}/{lang}: {type(exc).__name__}")
-                continue
+    for (rec, lang, _), text in zip(jobs, texts):
+        if is_degenerate(text):
+            dropped["degenerate"] += 1
+            continue
+        ok, hits = looks_like_target_language(text, lang)
+        if not ok:
+            dropped["wrong_language"] += 1
+            continue
 
-            if is_degenerate(text):
-                dropped["degenerate"] += 1
-                continue
-
-            ok, hits = looks_like_target_language(text, lang)
-            if not ok:
-                dropped["wrong_language"] += 1
-                continue
-
-            kept_per_lang[lang] += 1
-            results.append({
-                "id": rec["id"],
-                "language": lang,
-                "title": rec["title"],
-                "source_abstract": rec["abstract"],
+        kept_per_lang[lang] += 1
+        results.append({
+            "id": rec["id"],
+            "language": lang,
+            "title": rec["title"],
+            "source_abstract": rec["abstract"],
+            "translation": text,
+            "marker_hits": hits,
+        })
+        if len(audit) < args.audit_sample:
+            audit.append({
+                "id": rec["id"], "language": lang, "title": rec["title"],
                 "translation": text,
-                "marker_hits": hits,
             })
-            if len(audit) < args.audit_sample:
-                audit.append({
-                    "id": rec["id"], "language": lang, "title": rec["title"],
-                    "translation": text,
-                })
-
-        if (i + 1) % 25 == 0:
-            print(f"  {i + 1}/{len(records)} records | kept "
-                  f"{len(results)} | dropped {dropped}")
 
     out_path = os.path.join(args.out, "translations.jsonl")
     with open(out_path, "w", encoding="utf-8") as fh:

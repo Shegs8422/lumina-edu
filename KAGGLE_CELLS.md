@@ -125,16 +125,20 @@ exec(compile(src, "smoke_test_language.py", "exec"))
 ## Cell 6 — Stage 2: self-distillation  **<< THIS IS THE CELL TO EDIT**
 
 ```python
-# EDIT THIS NUMBER.
-#   1500  ~4,500 generations, ~3,000 usable targets, ~4-6 h on T4 x2  <- recommended
-#   3000  ~9,000 generations, ~6,000 targets,         ~9-13 h on T4 x2
-#   600   ~1,800 generations, ~1,200 targets,         ~1.5-2.5 h  (only if very tight)
-DISTILL_LIMIT = 1500
+# Batched generation (batch_size 16) cut this from ~13 h to ~3 h.
+#   1500  ~4,500 generations, ~3,000 usable targets, ~1.5-2 h   <- safe default
+#   3000  ~9,000 generations, ~6,000 targets,        ~3-4 h   <- recommended now
+#   600   ~1,800 generations, ~1,200 targets,        ~45-60 min
+DISTILL_LIMIT = 3000
+BATCH_SIZE = 16      # 16 fits comfortably in 4-bit on a single T4
 
 rc = subprocess.run([
     sys.executable,
     os.path.join(DATA_ROOT, "scripts/self_distill_translations.py"),
     "--limit", str(DISTILL_LIMIT),
+    "--batch-size", str(BATCH_SIZE),
+    "--max-new-tokens", "200",
+    "--abstract-chars", "700",
     "--input", os.path.join(DATA_ROOT, "data/processed/train.jsonl"),
     "--out", os.path.join(DATA_ROOT, "data/distilled"),
 ]).returncode
@@ -180,3 +184,32 @@ if distilled:
 ```python
 trainer.main()
 ```
+
+---
+
+## Cell 10 — benchmark (run after training)
+
+```python
+!python {DATA_ROOT}/scripts/evaluate_benchmark.py \
+  --limit 500 \
+  --batch-size 16 \
+  --adapter /kaggle/working/lumina-edu-natlas-adapter-powered-by-awarri
+```
+
+Batched generation takes this from ~3 h to ~25 min.
+
+---
+
+## Time budget (T4 x2, 4-bit)
+
+| Stage | Before batching | After |
+|---|---|---|
+| Stage 1 smoke test | 5 min | 5 min |
+| Stage 2 distill 3000 | 9-13 h | **3-4 h** |
+| Stage 4 train | ~4 h | **~2 h** |
+| Benchmark 500x2 | ~3 h | **~25 min** |
+| **Total** | **~16-20 h** | **~6 h** |
+
+`MAX_SEQ_LENGTH` is 1024 (was 2048). Measured on 3,000 real examples: median
+543 tokens, p90 931, so 1024 truncates only 5.1% of examples for a 50% compute
+saving. Re-run `scripts/measure_seq_lengths.py` to reproduce.

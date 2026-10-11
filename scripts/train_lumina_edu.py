@@ -41,7 +41,11 @@ from transformers import TrainingArguments
 
 # ---------------------------------------------------------------- config ----
 MODEL_ID = "NCAIR1/N-ATLaS"
-MAX_SEQ_LENGTH = 2048
+# Median abstract is ~1370 characters (~350 tokens) and the chat template adds
+# a system turn, so examples land around 600-900 tokens. Sizing the window at
+# 2048 padded every sequence to nearly 2k and roughly doubled training time for
+# no benefit; 1024 truncates a negligible fraction.
+MAX_SEQ_LENGTH = 1024
 LOAD_IN_4BIT = True
 LORA_R = 16
 LORA_ALPHA = 16

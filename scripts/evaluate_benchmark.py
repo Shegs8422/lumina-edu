@@ -156,18 +156,30 @@ def build_prompts(records, tokenizer):
     return items
 
 
-def run_generation(model, tokenizer, items, batch_size=4):
-    """Greedy-decode every prompt. Streams to a log so nothing is lost."""
+def run_generation(model, tokenizer, items, batch_size=8):
+    """Greedy-decode every prompt in batches.
+
+    Sequential generation leaves the GPU almost entirely idle: a 4-bit 8B
+    model decoding one ~250-token completion at a time uses a fraction of a
+    T4. Batching is the difference between a 3-hour benchmark and a 20-minute
+    one. Left padding is required for correct batched decoding on a
+    decoder-only model.
+    """
     outputs = []
-    for n, item in enumerate(items):
-        inputs = tokenizer(item["chat_prompt"], return_tensors="pt").to(model.device)
+    n = len(items)
+    for start in range(0, n, batch_size):
+        chunk = items[start:start + batch_size]
+        enc = tokenizer([it["chat_prompt"] for it in chunk],
+                        return_tensors="pt", padding=True, truncation=True,
+                        max_length=MAX_SEQ_LENGTH).to(model.device)
         with torch.no_grad():
-            gen = model.generate(**inputs, **GEN_KWARGS)
-        completion = tokenizer.decode(
-            gen[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-        outputs.append(completion.strip())
-        if (n + 1) % 25 == 0:
-            print(f"    generated {n + 1}/{len(items)}")
+            gen = model.generate(
+                **enc, pad_token_id=tokenizer.pad_token_id, **GEN_KWARGS)
+        prompt_len = enc["input_ids"].shape[-1]
+        for row in gen[:, prompt_len:]:
+            outputs.append(tokenizer.decode(row, skip_special_tokens=True).strip())
+        print(f"    generated {min(start + batch_size, n)}/{n}", end="\r", flush=True)
+    print()
     return outputs
 
 
@@ -226,6 +238,9 @@ def main():
     ap.add_argument("--limit", type=int, default=500)
     ap.add_argument("--adapter", required=True)
     ap.add_argument("--benchmark", default=DEFAULT_BENCH)
+    ap.add_argument("--batch-size", type=int, default=8,
+                    help="generations per forward pass; 8 fits comfortably in "
+                         "4-bit on a T4, raise to 16 on T4 x2")
     args = ap.parse_args()
 
     from unsloth import FastLanguageModel
@@ -245,10 +260,14 @@ def main():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_ID, max_seq_length=MAX_SEQ_LENGTH, load_in_4bit=True)
     FastLanguageModel.for_inference(model)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     items = build_prompts(records, tokenizer)
-    print(f"[2/4] Generating BASE responses for {len(items)} prompts")
-    base_out = run_generation(model, tokenizer, items)
+    print(f"[2/4] Generating BASE responses for {len(items)} prompts "
+          f"(batch_size={args.batch_size})")
+    base_out = run_generation(model, tokenizer, items, args.batch_size)
 
     # ---- 2. attach adapter ----
     print("\n[3/4] Attaching Lumina-Edu LoRA adapter")
@@ -257,8 +276,8 @@ def main():
     model = PeftModel.from_pretrained(model, adapter_dir)
     model.eval()
 
-    print(f"[4/4] Generating FINE-TUNED responses")
-    ft_out = run_generation(model, tokenizer, items)
+    print(f"[4/4] Generating FINE-TUNED responses (batch_size={args.batch_size})")
+    ft_out = run_generation(model, tokenizer, items, args.batch_size)
 
     # ---- 3. score ----
     df = score(items, base_out, ft_out)
