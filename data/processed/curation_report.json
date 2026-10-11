@@ -22,47 +22,55 @@
   "train_size": 9196,
   "dev_size": 200,
   "benchmark_meets_naic_500": true,
+  "benchmark_by_source": {
+    "redeemers": 19,
+    "ui_ibadan": 591
+  },
+  "train_by_source": {
+    "redeemers": 64,
+    "ui_ibadan": 9132
+  },
   "stats": {
     "train": {
       "count": 9196,
       "by_type": {
-        "Article": 8024,
+        "Article": 8013,
+        "Book": 24,
         "Dissertation": 16,
-        "Book chapter": 281,
-        "Book": 9,
+        "Book chapter": 277,
         "Thesis": 856,
         "Technical Report": 8,
         "Dataset": 2
       },
-      "education_flagged": 4240,
+      "education_flagged": 4185,
       "by_institution": {
-        "University of Ibadan": 9196
+        "Redeemer's University": 64,
+        "University of Ibadan": 9132
       },
       "year_min": 2018,
       "year_max": 2026,
-      "median_abstract_chars": 1490
+      "median_abstract_chars": 1489
     },
     "dev": {
       "count": 200,
       "by_type": {
-        "Book": 16,
-        "Book chapter": 5,
-        "Article": 179
+        "Article": 191,
+        "Book chapter": 9
       },
-      "education_flagged": 30,
+      "education_flagged": 85,
       "by_institution": {
-        "University of Ibadan": 200
+        "Redeemer's University": 200
       },
-      "year_min": 2018,
+      "year_min": 2021,
       "year_max": 2025,
-      "median_abstract_chars": 1320
+      "median_abstract_chars": 1375
     },
     "benchmark": {
       "count": 610,
       "by_type": {
         "Book chapter": 19,
-        "Article": 524,
-        "Book": 2,
+        "Article": 523,
+        "Book": 3,
         "Dissertation": 2,
         "Thesis": 55,
         "Working Paper": 1,
@@ -74,12 +82,12 @@
       },
       "education_flagged": 278,
       "by_institution": {
-        "Redeemer's University": 283,
-        "University of Ibadan": 327
+        "Redeemer's University": 19,
+        "University of Ibadan": 591
       },
       "year_min": 2018,
       "year_max": 2026,
-      "median_abstract_chars": 1469
+      "median_abstract_chars": 1478
     }
   },
   "split_overlap": {
@@ -88,6 +96,6 @@
     "dev&benchmark": 0
   },
   "splits_disjoint": true,
-  "max_train_eval_cosine": 0.6861,
-  "train_eval_pairs_above_0.5": 19
+  "max_train_eval_cosine": 0.684,
+  "train_eval_pairs_above_0.5": 35
 }

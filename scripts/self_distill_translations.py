@@ -53,7 +53,10 @@ ATTRIBUTION = ("Powered by Awarri Technologies and the Federal Ministry of "
 LANG_MARKERS = {
     "Yoruba": ["ati", "ni", "ko", "wa", "fun", "won", "yi", "naa", "kini", "won"],
     "Hausa": ["da", "na", "ta", "ya", "ba", "sun", "kuma", "wannan", "shi", "cikin"],
-    "Igbo": ["na", "ya", "ihe", "ndi", "ka", "gi", "maka", "nke", "a", "buru"],
+    # NB: "a" was previously listed as an Igbo marker, but it is the English
+    # article and let ordinary English prose pass the gate. Replaced with
+    # unambiguous Igbo orthography.
+    "Igbo": ["na", "ya", "ihe", "ndi", "ka", "gi", "maka", "nke", "buru", "anyị"],
 }
 
 

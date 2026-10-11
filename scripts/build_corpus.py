@@ -195,16 +195,23 @@ def stage_dedupe(records, audit, threshold=0.82):
 
 
 def stage_split(records, audit, n_eval, n_dev):
-    """Stratify by (type, education flag) so the benchmark mirrors the corpus."""
+    """Stratify by source, document type and education flag.
+
+    Stratifying on `source` matters: without it every Redeemer's record
+    (there are only ~316) lands in the benchmark and none in training, so the
+    evaluation set becomes ~46% an institution the model has never seen. That
+    measures memorisation failure, not sector adaptation.
+    """
     buckets = defaultdict(list)
     for r in records:
-        buckets[(r["_dtype"], r["_is_education"])].append(r)
+        buckets[(r["source"], r["_dtype"], r["_is_education"])].append(r)
 
+    total = len(records)
     eval_set, train_set = [], []
-    # Prioritise education records so the eval set reflects our target vertical.
-    for key, items in sorted(buckets.items(), key=lambda kv: (not kv[0][1], -len(kv[1]))):
+    for key, items in sorted(buckets.items(),
+                             key=lambda kv: (kv[0][0], not kv[0][2], -len(kv[1]))):
         items.sort(key=lambda r: r["id"])
-        quota = max(1, round(n_eval * len(items) / len(records)))
+        quota = max(1, round(n_eval * len(items) / total))
         eval_set.extend(items[:quota])
         train_set.extend(items[quota:])
 
@@ -217,6 +224,8 @@ def stage_split(records, audit, n_eval, n_dev):
     audit["train_size"] = len(final_train)
     audit["dev_size"] = len(dev_set)
     audit["benchmark_meets_naic_500"] = len(eval_set) >= 500
+    audit["benchmark_by_source"] = dict(Counter(r["source"] for r in eval_set))
+    audit["train_by_source"] = dict(Counter(r["source"] for r in final_train))
     return final_train, dev_set, eval_set
 
 

@@ -34,6 +34,7 @@ Environment (Kaggle secret): HF_TOKEN with read+write on NCAIR1/N-ATLaS.
 import json
 import os
 import random
+import re
 
 import torch
 from datasets import Dataset
@@ -102,17 +103,33 @@ def load_distilled(path):
     return table
 
 
+def first_sentences(text, n=2, max_chars=420):
+    """Extractive lead: the first n sentences, capped.
+
+    Used as a COMPRESSION target. The previous target was the entire abstract
+    with a few words prepended, which made the task copy training: the model
+    learned to echo its input verbatim. Because the benchmark scores against
+    the abstract that also appears in the prompt, a copier scores well for the
+    wrong reason. A short extractive target forces selection instead.
+    """
+    parts = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    out = " ".join(parts[:n]).strip()
+    return out[:max_chars] if out else (text or "")[:max_chars]
+
+
 def build_examples(records, distilled=None):
     """Turn curated records into chat-format training examples.
 
     Tasks:
-      1. summarise the study
-      2. explain the study in a target Nigerian language (requires distilled data)
-      3. identify the institutional / disciplinary context
+      1. compress   - summarise to the leading claim (extractive)
+      2. translate  - explain in a target Nigerian language (needs distilled data)
+      3. attribute  - identify the source institution
 
-    Task 2 is only emitted when a real translated target exists for that
-    record. We never fabricate a translation target, because a bracketed
-    placeholder teaches the model to emit scaffolding instead of Yoruba.
+    Task 1 is deliberately NOT "restate the abstract". Training the model to
+    reproduce a long input verbatim teaches echoing, and because the benchmark
+    reference is that same abstract, echo-training inflates the score without
+    improving anything a user would notice. The extractive target is a
+    fraction of the input, so copying the whole thing is penalised.
     """
     languages = ["Yoruba", "Hausa", "Igbo"]
     distilled = distilled or {}
@@ -125,22 +142,20 @@ def build_examples(records, distilled=None):
         subjects = ", ".join(rec.get("subjects", [])[:3])
         year = rec.get("date", "")[:4]
 
-        # Task 1 - summarisation
+        # Task 1 - extractive compression
         out.append({
             "messages": [
                 {"role": "system", "content":
                     f"You are Lumina-Edu, an academic research assistant for "
-                    f"Nigerian higher education. {ATTRIBUTION}"},
+                    f"Nigerian higher education. Answer in at most two sentences. "
+                    f"{ATTRIBUTION}"},
                 {"role": "user", "content":
-                    f"Summarise the following research abstract from {institution}.\n\n"
-                    f"Title: {title}\nAbstract: {abstract}"},
+                    f"In one or two sentences, state the main claim of this "
+                    f"research.\n\nTitle: {title}\nAbstract: {abstract}"},
                 {"role": "assistant", "content":
-                    f"This study, conducted at {institution}"
-                    + (f" ({year})" if year else "") +
-                    (f" and classified under {subjects}" if subjects else "") +
-                    f", examines the following. {abstract}"},
+                    first_sentences(abstract)},
             ],
-            "task": "summarise",
+            "task": "compress",
         })
 
         # Task 2 - multilingual explanation, ONLY with a real target
@@ -160,21 +175,22 @@ def build_examples(records, distilled=None):
                 "task": f"translate_{lang.lower()}",
             })
 
-        # Task 3 - grounded institutional context (anti-hallucination)
+        # Task 3 - grounded attribution
         out.append({
             "messages": [
                 {"role": "system", "content":
-                    f"You are Lumina-Edu. Only state institutions and subjects "
-                    f"that appear in the text you are given. {ATTRIBUTION}"},
+                    f"You are Lumina-Edu. Name only the institution that actually "
+                    f"produced the work. If you are unsure, say you are unsure. "
+                    f"{ATTRIBUTION}"},
                 {"role": "user", "content":
-                    f"Which institution produced this work and what discipline "
-                    f"does it belong to?\n\nTitle: {title}\nAbstract: {abstract}"},
+                    f"Which Nigerian university produced this work?\n\n"
+                    f"Title: {title}\nAbstract: {abstract}"},
                 {"role": "assistant", "content":
                     f"Institution: {institution}\n"
                     f"Discipline: {subjects or 'not specified'}\n"
                     f"Year: {year or 'not specified'}"},
             ],
-            "task": "grounding",
+            "task": "attribute",
         })
 
     return out

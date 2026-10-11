@@ -100,18 +100,38 @@ INSTITUTION_HINTS = ["University of Ibadan", "University of Nigeria", "Ibadan",
                      "Abeokuta", "Lagos", "Nsukka", "University of Ilorin"]
 
 
-def grounding_ok(pred, prompt):
-    """Did the model name an institution that genuinely appears in the prompt?
+# Distinct institution names only. Bare city names such as "Ibadan" must NOT
+# appear here: "Ibadan" is a substring of "University of Ibadan", so including
+# it made a CORRECT answer look like a confabulation.
+INSTITUTION_HINTS = [
+    "University of Ibadan",
+    "Redeemer's University",
+    "University of Lagos",
+    "University of Nigeria",
+    "Obafemi Awolowo University",
+    "Ahmadu Bello University",
+    "University of Ilorin",
+]
 
-    A hallucinated local citation names a plausible Nigerian institution that
-    is not in the source. Counting that failure directly is far more
-    meaningful to this project than a generic overlap score.
+
+def attribution_hit(pred, expected):
+    """Did the model name the CORRECT source institution, and not another?
+
+    Replaces `grounding_ok`, which scored a correct answer as a hallucination:
+    the benchmark prompt never names the institution, so naming it was checked
+    against a prompt that could not contain it.
+
+    This directly tests the project's headline failure mode - a hallucinated
+    local citation is a plausible Nigerian institution that is NOT the source.
     """
-    low = pred.lower()
-    named = [h for h in INSTITUTION_HINTS if h.lower() in low]
-    if not named:
-        return None  # no institution claim to judge
-    return any(h.lower() in prompt.lower() for h in named)
+    if not expected:
+        return None
+    p = pred.lower()
+    if expected.lower() not in p:
+        return False
+    wrong = [h for h in INSTITUTION_HINTS
+             if h.lower() != expected.lower() and h.lower() in p]
+    return not wrong
 
 
 # ------------------------------------------------------------- inference ---
@@ -191,7 +211,8 @@ def score(items, base_out, ft_out):
         b_r = scorer.score(ref, b)
         f_r = scorer.score(ref, f)
 
-        gb, gf = grounding_ok(b, item["prompt"]), grounding_ok(f, item["prompt"])
+        gb = attribution_hit(b, item["institution"])
+        gf = attribution_hit(f, item["institution"])
         rows.append({
             "sample_id": item["id"],
             "target_language": item["target_language"],
@@ -222,14 +243,31 @@ def summarise(df):
 
     per_lang = {}
     for lang, grp in df.groupby("target_language"):
-        per_lang[lang] = {
+        d = {
             "n": int(len(grp)),
             "base_rougeL": round(float(grp["base_rougeL"].mean()), 4),
             "finetuned_rougeL": round(float(grp["ft_rougeL"].mean()), 4),
             "delta_rougeL": round(
                 float(grp["ft_rougeL"].mean() - grp["base_rougeL"].mean()), 4),
+            "base_chrf": round(float(grp["base_chrf"].mean()), 4),
+            "finetuned_chrf": round(float(grp["ft_chrf"].mean()), 4),
+            "delta_chrf": round(
+                float(grp["ft_chrf"].mean() - grp["base_chrf"].mean()), 4),
         }
+        # ROUGE applies an English stemmer, which is meaningless for Yoruba,
+        # Hausa and Igbo (it scores 0.000 cross-language). chrF is
+        # accent-normalised and character-based, so it is the metric we
+        # headline for non-English and flag the ROUGE figure as unreliable.
+        d["headline_metric"] = "rougeL" if lang == "English" else "chrf"
+        d["headline_base"] = d["base_rougeL"] if lang == "English" else d["base_chrf"]
+        d["headline_finetuned"] = (d["finetuned_rougeL"] if lang == "English"
+                                   else d["finetuned_chrf"])
+        per_lang[lang] = d
     out["by_language"] = per_lang
+    out["metric_note"] = (
+        "ROUGE uses an English stemmer and is unreliable for Yoruba/Hausa/Igbo; "
+        "chrF is the reported metric for those languages."
+    )
     return out
 
 
@@ -293,10 +331,12 @@ def main():
     for k, v in summary.items():
         if k != "by_language":
             print(f"  {k:<34} {v}")
-    print("\n  Per-language ROUGE-L:")
+    print("\n  Per-language (headline metric: ROUGE-L for English, chrF otherwise):")
     for lang, d in summary["by_language"].items():
-        print(f"    {lang:<9} n={d['n']:<4} base={d['base_rougeL']:<8} "
-              f"finetuned={d['finetuned_rougeL']:<8} delta={d['delta_rougeL']:+.4f}")
+        print(f"    {lang:<9} n={d['n']:<4} "
+              f"base={d['headline_base']:<8} finetuned={d['headline_finetuned']:<8} "
+              f"delta={d['headline_finetuned'] - d['headline_base']:+.4f} "
+              f"[{d['headline_metric']}]")
     print("\nArtefacts:")
     print("  data/benchmark/naic_benchmark_results.csv   (per-sample, full text)")
     print("  data/benchmark/naic_benchmark_summary.json")

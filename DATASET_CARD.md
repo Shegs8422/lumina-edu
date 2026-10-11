@@ -13,7 +13,7 @@ tags:
 
 # Lumina-Edu Dataset Card
 
-**Generated:** 2026-10-11 13:50 UTC
+**Generated:** 2026-10-11 14:34 UTC
 **Project:** Lumina-Edu - Powered by Awarri (NAIC 2026, PS3 Sectoral Fine-Tuning)
 **Base model:** `NCAIR1/N-ATLaS`
 
@@ -64,9 +64,9 @@ harvest was dominated by "Political news", "Adverts", "Vacancies" and
 
 | Split | Records | Education-flagged | Median abstract chars |
 |---|---|---|---|
-| train | 9196 | 4240 | 1490 |
-| dev | 200 | 30 | 1320 |
-| benchmark_eval | 610 | 278 | 1469 |
+| train | 9196 | 4185 | 1489 |
+| dev | 200 | 85 | 1375 |
+| benchmark_eval | 610 | 278 | 1478 |
 
 - **train** - used for the QLoRA fine-tune only.
 - **dev** - held out for loss monitoring; never trained on.
@@ -85,8 +85,8 @@ mirrors the corpus composition rather than over-representing one document type.
 | Overlap train/dev | 0 |
 | Overlap train/benchmark | 0 |
 | Overlap dev/benchmark | 0 |
-| Max cosine similarity train vs benchmark | 0.6861 |
-| Train/benchmark pairs above 0.5 similarity | 19 |
+| Max cosine similarity train vs benchmark | 0.684 |
+| Train/benchmark pairs above 0.5 similarity | 35 |
 
 Near-duplicate removal was performed **before** splitting. This matters: the
 repository contains the same work deposited under different document types,
@@ -95,10 +95,10 @@ train/benchmark boundary and inflated every metric.
 
 ## 4. Benchmark composition
 
-- Article: 524
+- Article: 523
 - Thesis: 55
 - Book chapter: 19
-- Book: 2
+- Book: 3
 - Dissertation: 2
 - Technical Report: 2
 - Dataset: 2
