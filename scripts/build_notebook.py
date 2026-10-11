@@ -32,29 +32,72 @@ This notebook runs the full training pipeline in four stages:
 4. **QLoRA fine-tune**
 
 ### Before running
-- Enable **GPU** (T4 x2 recommended) in notebook settings
-- Enable **Internet** so gated N-ATLaS weights can download
-- Add `HF_TOKEN` under **Add-ons > Secrets** (needs access to NCAIR1/N-ATLaS)
-- Attach the project as a Kaggle dataset, e.g. `/kaggle/input/lumina-edu-data`
+
+**1. Enable hardware** — Session options → Accelerator **GPU T4 x2**, Internet **On**.
+
+**2. Attach the dataset** — Add Input → `oluwasegunolanrewaju/lumina-edu-data`.
+
+**3. Add the Hugging Face token as a secret**
+
+Kaggle Secrets are **per-notebook**, not in account Settings — `kaggle.com/settings/secrets`
+returns 404 and there is nothing to click there. Add it from inside this notebook:
+
+> **Add-ons → Secrets → Add new secret**
+> - Label: `HF_TOKEN`
+> - Value: your `hf_...` token (needs gated access to `NCAIR1/N-ATLaS`)
+> - Tick the checkbox beside `HF_TOKEN` to attach it to this session
+
+Without this the notebook halts at Stage 0 with an assertion, because N-ATLaS
+is a gated repository and cannot be downloaded anonymously.
+
+**Fallback if the Secrets panel is unavailable:** make this notebook **private**
+and paste the token into the Stage 0 cell directly. Never do this in a public
+notebook — notebook source is public.
 """),
 
 md("## Stage 0 - Environment and authentication"),
 
 code("""import os, sys, json, subprocess, importlib.util
 
-HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("KAGGLE_HF_TOKEN")
-if not HF_TOKEN:
+def get_hf_token():
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("KAGGLE_HF_TOKEN")
+    if tok:
+        return tok
     try:
         from kaggle_secrets import UserSecretsClient
-        HF_TOKEN = UserSecretsClient().get_secret("HF_TOKEN")
-    except Exception as e:
-        print("No HF_TOKEN in secrets:", e)
+        return UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception:
+        return None
 
-assert HF_TOKEN, "Add HF_TOKEN via Add-ons > Secrets"
+HF_TOKEN = get_hf_token()
 
-from huggingface_hub import login
+if not HF_TOKEN:
+    raise SystemExit(
+        "HF_TOKEN not found.\\n\\n"
+        "N-ATLaS is a GATED repo - it cannot be downloaded anonymously.\\n"
+        "Kaggle Secrets are per-notebook, not in account Settings:\\n\\n"
+        "  1. In THIS notebook: Add-ons -> Secrets -> Add new secret\\n"
+        "  2. Label  : HF_TOKEN\\n"
+        "  3. Value  : your hf_... token\\n"
+        "  4. Tick the checkbox beside HF_TOKEN to attach it to the session\\n\\n"
+        "There is nothing at kaggle.com/settings/secrets - that URL is a 404."
+    )
+
+from huggingface_hub import login, whoami
 login(token=HF_TOKEN, add_to_git_credential=False)
-print("Logged in to Hugging Face")"""),
+print("Logged in as:", whoami()["name"])
+
+# Confirm gated access BEFORE spending GPU time on a 16 GB download.
+from huggingface_hub import hf_hub_download
+try:
+    hf_hub_download("NCAIR1/N-ATLaS", "config.json")
+    print("Gated access to NCAIR1/N-ATLaS: CONFIRMED")
+except Exception as e:
+    raise SystemExit(
+        f"No access to NCAIR1/N-ATLaS: {type(e).__name__}\\n"
+        "Request and accept the licence at "
+        "https://huggingface.co/NCAIR1/N-ATLaS"
+    )"""),
 
 code("""!pip install -q unsloth
 !pip install -q unsloth_zoo
