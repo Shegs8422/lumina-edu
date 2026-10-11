@@ -9,7 +9,14 @@ import json, os, re, sys, unicodedata, datetime
 import torch
 
 MODEL_ID = "NCAIR1/N-ATLaS"
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# This script is executed via exec() inside the Kaggle notebook, where
+# __file__ is undefined. Resolve the project root from DATA_ROOT when the
+# notebook sets it, and fall back to __file__ when run directly.
+if "__file__" in dir():
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+else:
+    PROJECT_ROOT = globals().get("DATA_ROOT", "/kaggle/working")
 MARKERS = {
     "Yoruba": ["ati","ni","ko","wa","fun","won","yi","naa","kini","won"],
     "Hausa": ["da","na","ta","ya","ba","sun","kuma","wannan","shi","cikin"],
