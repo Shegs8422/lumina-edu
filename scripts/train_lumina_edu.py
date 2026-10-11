@@ -259,16 +259,35 @@ def main():
     supports_bf16 = torch.cuda.is_bf16_supported()
 
     from trl import SFTTrainer
+    import inspect
 
-    trainer = SFTTrainer(
+    # TRL renamed its tokenizer argument to `processing_class` and, in recent
+    # releases, removed `tokenizer` outright. Kaggle currently ships
+    # transformers 5.16.1 with a matching TRL, so we detect the signature and
+    # pass whichever keyword this version accepts.
+    params = inspect.signature(SFTTrainer.__init__).parameters
+    tok_kwarg = "processing_class" if "processing_class" in params else "tokenizer"
+    print(f"trl version: {__import__('trl').__version__}  |  "
+          f"using '{tok_kwarg}' for the tokenizer")
+
+    trainer_kwargs = dict(
         model=model,
-        tokenizer=tokenizer,
         train_dataset=train_ds,
         eval_dataset=dev_ds,
         dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH,
         dataset_num_proc=2,
         packing=False,
+    )
+    trainer_kwargs[tok_kwarg] = tokenizer
+
+    # `max_seq_length` was renamed to `max_length`; accept either.
+    if "max_length" in params:
+        trainer_kwargs["max_length"] = MAX_SEQ_LENGTH
+    else:
+        trainer_kwargs["max_seq_length"] = MAX_SEQ_LENGTH
+
+    trainer = SFTTrainer(
+        **trainer_kwargs,
         args=TrainingArguments(
             per_device_train_batch_size=2,
             gradient_accumulation_steps=8,
@@ -292,6 +311,8 @@ def main():
         ),
     )
 
+    print(f"precision: {'bf16' if supports_bf16 else 'fp16'} "
+          f"(T4 does not support bfloat16, so fp16 is correct here)")
     print("Starting training ...")
     trainer.train()
 
