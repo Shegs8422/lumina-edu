@@ -57,6 +57,26 @@ SEED = 3407
 
 DATA_DIR = "data/processed"
 ADAPTER_PATH = "lumina-edu-natlas-adapter-powered-by-awarri"
+OUT_DIR = "outputs"
+
+
+def resolve_output_dir(preferred):
+    """Pick a writable directory.
+
+    On Kaggle, /kaggle/input is READ-ONLY (OSError Errno 30). Anything we
+    write - distilled data, the adapter, checkpoints - must go to
+    /kaggle/working, the only writable location in a notebook.
+    """
+    if os.environ.get("LUMINA_OUTPUT_DIR"):
+        return os.environ["LUMINA_OUTPUT_DIR"]
+    if os.path.isdir("/kaggle/working"):
+        if os.path.isabs(preferred) and preferred.startswith("/kaggle/input"):
+            # /kaggle/input/<dataset>/<tail> -> /kaggle/working/<tail>
+            tail = preferred.split("/kaggle/input", 1)[1].lstrip("/")
+            parts = tail.split("/", 1)
+            tail = parts[1] if len(parts) == 2 else tail
+            return os.path.join("/kaggle/working", tail)
+    return preferred
 HF_REPO_ID = os.environ.get("HF_REPO_ID", "")  # e.g. "your-org/lumina-edu-adapter"
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -252,7 +272,8 @@ def main():
     dev_records = load_jsonl(os.path.join(DATA_DIR, "dev.jsonl"))
     print(f"train records={len(train_records)} dev records={len(dev_records)}")
 
-    distilled = load_distilled(os.path.join(DATA_DIR, "distilled", "translations.jsonl"))
+    distilled = load_distilled(resolve_output_dir(
+        os.path.join(DATA_DIR, "distilled", "translations.jsonl")))
 
     train_ex = build_examples(train_records, distilled)
     dev_ex = build_examples(dev_records, distilled)
@@ -316,7 +337,7 @@ def main():
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=SEED,
-            output_dir="outputs",
+            output_dir=OUT_DIR,
             report_to=[],
         ),
     )
@@ -326,8 +347,12 @@ def main():
     print("Starting training ...")
     trainer.train()
 
-    print(f"Saving adapter to {ADAPTER_PATH}")
-    model.save_pretrained_merged(ADAPTER_PATH, tokenizer, save_method="lora")
+    adapter_out = resolve_output_dir(ADAPTER_PATH)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    print(f"Saving adapter to {adapter_out}")
+    model.save_pretrained_merged(adapter_out, tokenizer, save_method="lora")
+    with open(os.path.join(OUT_DIR, "adapter_path.txt"), "w") as fh:
+        fh.write(adapter_out)
 
     if HF_REPO_ID:
         print(f"Pushing to Hugging Face: {HF_REPO_ID}")

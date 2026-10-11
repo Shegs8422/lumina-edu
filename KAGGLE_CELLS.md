@@ -224,7 +224,7 @@ print("distill exit code:", rc)
 ## Cell 7 — inspect distillation report
 
 ```python
-rep_path = os.path.join(DATA_ROOT, "data/distilled/distillation_report.json")
+rep_path = "/kaggle/working/data/distilled/distillation_report.json"
 if os.path.exists(rep_path):
     print(json.dumps(json.load(open(rep_path)), indent=2, ensure_ascii=False))
     print("\n>>> REVIEW data/distilled/audit_sample.json BEFORE training.")
@@ -264,10 +264,10 @@ trainer.main()
 ## Cell 10 — benchmark (run after training)
 
 ```python
-!python {DATA_ROOT}/scripts/evaluate_benchmark.py \
+!python /kaggle/input/lumina-edu-data/scripts/evaluate_benchmark.py \
   --limit 500 \
   --batch-size 16 \
-  --adapter /kaggle/working/lumina-edu-natlas-adapter-powered-by-awarri
+  --adapter /kaggle/working/outputs/lumina-edu-natlas-adapter-powered-by-awarri
 ```
 
 Batched generation takes this from ~3 h to ~25 min.

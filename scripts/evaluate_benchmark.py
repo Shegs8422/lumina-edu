@@ -52,6 +52,24 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BENCH = os.path.join(PROJECT_ROOT, "data", "processed", "benchmark_eval.jsonl")
 OUT_DIR = os.path.join(PROJECT_ROOT, "data", "benchmark")
 
+
+def resolve_output_dir(preferred):
+    """Pick a writable directory.
+
+    Kaggle mounts /kaggle/input READ-ONLY, so benchmark artefacts must be
+    written to /kaggle/working.
+    """
+    if os.environ.get("LUMINA_OUTPUT_DIR"):
+        return os.environ["LUMINA_OUTPUT_DIR"]
+    if os.path.isdir("/kaggle/working"):
+        if os.path.isabs(preferred) and preferred.startswith("/kaggle/input"):
+            # /kaggle/input/<dataset>/<tail> -> /kaggle/working/<tail>
+            tail = preferred.split("/kaggle/input", 1)[1].lstrip("/")
+            parts = tail.split("/", 1)
+            tail = parts[1] if len(parts) == 2 else tail
+            return os.path.join("/kaggle/working", tail)
+    return preferred
+
 # Deterministic decoding: this benchmark compares models, not sampling luck.
 GEN_KWARGS = dict(
     max_new_tokens=NEW_TOKENS,
@@ -285,7 +303,9 @@ def main():
     from peft import PeftModel
 
     torch.manual_seed(SEED)
-    os.makedirs(OUT_DIR, exist_ok=True)
+    out_dir = resolve_output_dir(OUT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"benchmark output -> {out_dir}")
 
     with open(args.benchmark, encoding="utf-8") as fh:
         records = [json.loads(l) for l in fh if l.strip()][: args.limit]
@@ -319,9 +339,9 @@ def main():
 
     # ---- 3. score ----
     df = score(items, base_out, ft_out)
-    df.to_csv(os.path.join(OUT_DIR, "naic_benchmark_results.csv"), index=False)
+    df.to_csv(os.path.join(out_dir, "naic_benchmark_results.csv"), index=False)
     summary = summarise(df)
-    with open(os.path.join(OUT_DIR, "naic_benchmark_summary.json"), "w",
+    with open(os.path.join(out_dir, "naic_benchmark_summary.json"), "w",
               encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, ensure_ascii=False)
 
@@ -338,8 +358,8 @@ def main():
               f"delta={d['headline_finetuned'] - d['headline_base']:+.4f} "
               f"[{d['headline_metric']}]")
     print("\nArtefacts:")
-    print("  data/benchmark/naic_benchmark_results.csv   (per-sample, full text)")
-    print("  data/benchmark/naic_benchmark_summary.json")
+    print(f"  {out_dir}/naic_benchmark_results.csv   (per-sample, full text)")
+    print(f"  {out_dir}/naic_benchmark_summary.json")
 
 
 if __name__ == "__main__":

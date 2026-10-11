@@ -155,6 +155,25 @@ def generate_batched(model, tokenizer, jobs, batch_size, max_new_tokens):
     return outs
 
 
+def resolve_output_dir(preferred):
+    """Pick a writable output directory.
+
+    On Kaggle, /kaggle/input is mounted READ-ONLY; writing there raises
+    `OSError: [Errno 30] Read-only file system`. Everything we produce must
+    land in /kaggle/working, the only writable location in a notebook.
+    """
+    if os.environ.get("LUMINA_OUTPUT_DIR"):
+        return os.environ["LUMINA_OUTPUT_DIR"]
+    if os.path.isdir("/kaggle/working"):
+        if os.path.isabs(preferred) and preferred.startswith("/kaggle/input"):
+            # /kaggle/input/<dataset>/<tail> -> /kaggle/working/<tail>
+            tail = preferred.split("/kaggle/input", 1)[1].lstrip("/")
+            parts = tail.split("/", 1)
+            tail = parts[1] if len(parts) == 2 else tail
+            return os.path.join("/kaggle/working", tail)
+    return preferred
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default=os.path.join(PROJECT_ROOT, "data", "processed", "train.jsonl"))
@@ -169,6 +188,9 @@ def main():
                     help="how many samples to write out for manual review")
     args = ap.parse_args()
 
+    args.out = resolve_output_dir(args.out)
+    print(f"input : {args.input}")
+    print(f"output: {args.out}")
     os.makedirs(args.out, exist_ok=True)
     records = load_jsonl(args.input)[: args.limit]
     print(f"Distilling {len(records)} records x {len(TARGET_LANGUAGES)} languages "
