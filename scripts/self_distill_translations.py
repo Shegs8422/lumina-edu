@@ -122,35 +122,59 @@ def render(tokenizer, messages):
             messages, tokenize=False, add_generation_prompt=True)
 
 
-def generate_batched(model, tokenizer, jobs, batch_size, max_new_tokens):
-    """Generate translations for a list of (rec, lang, prompt) jobs in batches.
+def generate_batched(model, tokenizer, jobs, batch_size, max_new_tokens,
+                     on_batch=None, start_index=0):
+    """Generate translations in batches, streaming results as they complete.
 
-    Batching is the single biggest speed lever here: sequential generation
-    wastes the GPU, because a 4-bit 8B model decoding one short sequence at a
-    time leaves most of the T4 idle. Left-padding is required for correct
-    batched decoding on a decoder-only model.
+    Three changes driven by a real CUDA OOM at generation 736/9000:
+
+    * Adaptive batch size. On OOM we halve the batch, empty the cache and
+      retry, so a crowded GPU degrades throughput instead of killing the run.
+    * Streaming via `on_batch`. Previously every result was held in memory and
+      written only at the end, so an OOM at 736/9000 discarded ALL of it.
+    * Progress is resumable from start_index.
     """
     outs = []
     n = len(jobs)
-    for start in range(0, n, batch_size):
-        chunk = jobs[start:start + batch_size]
-        prompts = [render(tokenizer, j[2]) for j in chunk]
-        enc = tokenizer(prompts, return_tensors="pt", padding=True,
-                        truncation=True, max_length=MAX_SEQ_LENGTH).to(model.device)
-        with torch.no_grad():
-            gen = model.generate(
-                **enc,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                repetition_penalty=1.15,
-                use_cache=True,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-        prompt_len = enc["input_ids"].shape[-1]
-        for row in gen[:, prompt_len:]:
-            outs.append(tokenizer.decode(row, skip_special_tokens=True).strip())
-        done = min(start + batch_size, n)
-        print(f"    generated {done}/{n}", end="\r", flush=True)
+    i = 0
+    current = max(batch_size, 1)
+
+    while i < n:
+        size = min(current, n - i)
+        chunk = jobs[i:i + size]
+        try:
+            prompts = [render(tokenizer, j[2]) for j in chunk]
+            enc = tokenizer(prompts, return_tensors="pt", padding=True,
+                            truncation=True,
+                            max_length=MAX_SEQ_LENGTH).to(model.device)
+            with torch.no_grad():
+                gen = model.generate(
+                    **enc,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    repetition_penalty=1.15,
+                    use_cache=True,
+                    pad_token_id=tokenizer.pad_token_id,
+                    max_length=None,       # silence the 131072 conflict warning
+                )
+            prompt_len = enc["input_ids"].shape[-1]
+            batch_outs = [tokenizer.decode(row, skip_special_tokens=True).strip()
+                          for row in gen[:, prompt_len:]]
+            del gen, enc
+            outs.extend(batch_outs)
+            i += size
+            if on_batch:
+                on_batch(chunk, batch_outs)
+            print(f"    generated {i}/{n} (batch={current})", end="\r", flush=True)
+        except torch.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            if current == 1:
+                print(f"\n    OOM at batch size 1 on job {i}; skipping it")
+                outs.append("")
+                i += 1
+                continue
+            current = max(current // 2, 1)
+            print(f"\n    OOM - retrying at batch_size={current}")
     print()
     return outs
 
@@ -214,42 +238,55 @@ def main():
             jobs.append((rec, lang, build_prompt(
                 rec["title"], rec["abstract"], lang, args.abstract_chars)))
 
-    texts = generate_batched(model, tokenizer, jobs,
-                             args.batch_size, args.max_new_tokens)
-
-    results = []
+    # Stream accepted rows straight to disk. A previous run died at
+    # generation 736/9000 with results held only in memory, losing every
+    # completed generation. Filtering happens here so the file contains only
+    # accepted training targets, and a crash costs at most one batch.
+    out_path = os.path.join(args.out, "translations.jsonl")
+    seen_path = os.path.join(args.out, ".seen_keys")
     audit = []
     dropped = {"degenerate": 0, "wrong_language": 0}
     kept_per_lang = {l: 0 for l in TARGET_LANGUAGES}
 
-    for (rec, lang, _), text in zip(jobs, texts):
-        if is_degenerate(text):
-            dropped["degenerate"] += 1
-            continue
-        ok, hits = looks_like_target_language(text, lang)
-        if not ok:
-            dropped["wrong_language"] += 1
-            continue
+    seen = set()
+    if os.path.exists(seen_path) and os.path.exists(out_path):
+        with open(seen_path, encoding="utf-8") as fh:
+            seen = {line.strip() for line in fh if line.strip()}
+        print(f"resuming: {len(seen)} keys already distilled")
 
-        kept_per_lang[lang] += 1
-        results.append({
-            "id": rec["id"],
-            "language": lang,
-            "title": rec["title"],
-            "source_abstract": rec["abstract"],
-            "translation": text,
-            "marker_hits": hits,
-        })
-        if len(audit) < args.audit_sample:
-            audit.append({
-                "id": rec["id"], "language": lang, "title": rec["title"],
-                "translation": text,
-            })
+    def flush(chunk, outs):
+        with open(out_path, "a", encoding="utf-8") as sink, \
+                open(seen_path, "a", encoding="utf-8") as marker:
+            for (rec, lang, _), text in zip(chunk, outs):
+                key = f"{rec['id']}|{lang}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                if is_degenerate(text):
+                    dropped["degenerate"] += 1
+                    continue
+                ok, hits = looks_like_target_language(text, lang)
+                if not ok:
+                    dropped["wrong_language"] += 1
+                    continue
+                kept_per_lang[lang] += 1
+                sink.write(json.dumps({
+                    "id": rec["id"], "language": lang, "title": rec["title"],
+                    "source_abstract": rec["abstract"], "translation": text,
+                    "marker_hits": hits,
+                }, ensure_ascii=False) + "\n")
+                if len(audit) < args.audit_sample:
+                    audit.append({"id": rec["id"], "language": lang,
+                                  "title": rec["title"], "translation": text})
+            sink.flush()
+            marker.flush()
 
-    out_path = os.path.join(args.out, "translations.jsonl")
-    with open(out_path, "w", encoding="utf-8") as fh:
-        for r in results:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    generate_batched(model, tokenizer, jobs, args.batch_size,
+                     args.max_new_tokens, on_batch=flush)
+
+    results = load_jsonl(out_path) if os.path.exists(out_path) else []
+    print(f"accepted {len(results)} translations "
+          f"(dropped {dropped})")
 
     audit_path = os.path.join(args.out, "audit_sample.json")
     with open(audit_path, "w", encoding="utf-8") as fh:
