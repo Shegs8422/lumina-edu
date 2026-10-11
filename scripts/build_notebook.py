@@ -69,13 +69,22 @@ for i in range(torch.cuda.device_count()):
     print(f"  gpu{i}: {p.name} {p.total_memory/1e9:.1f}GB")
 assert torch.cuda.is_available(), "Enable GPU in notebook settings\""""),
 
-code("""DATA_ROOT = "/kaggle/input/lumina-edu-data"
-if not os.path.exists(DATA_ROOT):
+code("""import glob
+DATA_ROOT = None
+for cand in ["/kaggle/input/lumina-edu-data",
+             "/kaggle/input/lumina-edu-nigerian-academic-corpus",
+             "/kaggle/working"]:
+    if os.path.exists(os.path.join(cand, "scripts", "train_lumina_edu.py")):
+        DATA_ROOT = cand
+        break
+if DATA_ROOT is None:
+    print("Project dataset not attached. Falling back to /kaggle/working.")
     DATA_ROOT = "/kaggle/working"
-    print("WARNING: project dataset not attached; falling back to /kaggle/working")
 print("DATA_ROOT =", DATA_ROOT)
-assert os.path.exists(os.path.join(DATA_ROOT, "scripts")), "scripts/ not found"
-print(sorted(os.listdir(os.path.join(DATA_ROOT, "data/processed"))))"""),
+assert os.path.exists(os.path.join(DATA_ROOT, "data", "processed", "train.jsonl")), \\
+    "train.jsonl not found - attach the lumina-edu-data dataset"
+print("train.jsonl OK:", os.path.getsize(
+    os.path.join(DATA_ROOT, "data", "processed", "train.jsonl")) // 1024, "KB")"""),
 
 md("""## Stage 1 - Language capability smoke test
 
