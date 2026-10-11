@@ -36,7 +36,20 @@ def build(a):
     types = be.get("by_type", {})
     type_lines = "\n".join(f"- {k}: {v}" for k, v in sorted(types.items(), key=lambda x: -x[1]))
 
-    return f"""# Lumina-Edu Dataset Card
+    return f"""---
+license: other
+license_name: n-atlas-research-innovation
+license_link: https://huggingface.co/NCAIR1/N-ATLaS
+tags:
+- nigerian-academic
+- higher-education
+- yoruba
+- hausa
+- igbo
+- naic-2026
+---
+
+# Lumina-Edu Dataset Card
 
 **Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
 **Project:** Lumina-Edu - Powered by Awarri (NAIC 2026, PS3 Sectoral Fine-Tuning)

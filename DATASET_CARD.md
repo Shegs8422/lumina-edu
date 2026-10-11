@@ -1,6 +1,19 @@
+---
+license: other
+license_name: n-atlas-research-innovation
+license_link: https://huggingface.co/NCAIR1/N-ATLaS
+tags:
+- nigerian-academic
+- higher-education
+- yoruba
+- hausa
+- igbo
+- naic-2026
+---
+
 # Lumina-Edu Dataset Card
 
-**Generated:** 2026-10-11 10:55 UTC
+**Generated:** 2026-10-11 13:50 UTC
 **Project:** Lumina-Edu - Powered by Awarri (NAIC 2026, PS3 Sectoral Fine-Tuning)
 **Base model:** `NCAIR1/N-ATLaS`
 
