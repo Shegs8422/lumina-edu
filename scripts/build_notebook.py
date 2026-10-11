@@ -37,22 +37,27 @@ This notebook runs the full training pipeline in four stages:
 
 **2. Attach the dataset** — Add Input → `oluwasegunolanrewaju/lumina-edu-data`.
 
-**3. Add the Hugging Face token as a secret**
+**3. Supply the Hugging Face token as a Kaggle Secret**
 
-Kaggle Secrets are **per-notebook**, not in account Settings — `kaggle.com/settings/secrets`
-returns 404 and there is nothing to click there. Add it from inside this notebook:
+N-ATLaS is a **gated** repository and cannot be downloaded anonymously, so the
+token is required to run this notebook at all.
 
 > **Add-ons → Secrets → Add new secret**
 > - Label: `HF_TOKEN`
-> - Value: your `hf_...` token (needs gated access to `NCAIR1/N-ATLaS`)
+> - Value: your Hugging Face access token
 > - Tick the checkbox beside `HF_TOKEN` to attach it to this session
 
-Without this the notebook halts at Stage 0 with an assertion, because N-ATLaS
-is a gated repository and cannot be downloaded anonymously.
+Kaggle Secrets are **per-notebook**; they do not appear in account Settings
+(`kaggle.com/settings/secrets` returns 404).
 
-**Fallback if the Secrets panel is unavailable:** make this notebook **private**
-and paste the token into the Stage 0 cell directly. Never do this in a public
-notebook — notebook source is public.
+**Credential handling in this notebook:** the token is only ever read through
+`UserSecretsClient().get_secret()`, which returns the decrypted value at
+runtime. It is never written into a cell, printed, logged, or committed, and
+Kaggle masks it in cell output. Stage 0 deliberately prints only the account
+*name* returned by `whoami()`, never the credential.
+
+This is the only supported way to supply the token. Do not paste it into a
+cell — notebook source is public.
 """),
 
 md("## Stage 0 - Environment and authentication"),
@@ -78,9 +83,10 @@ if not HF_TOKEN:
         "Kaggle Secrets are per-notebook, not in account Settings:\\n\\n"
         "  1. In THIS notebook: Add-ons -> Secrets -> Add new secret\\n"
         "  2. Label  : HF_TOKEN\\n"
-        "  3. Value  : your hf_... token\\n"
+        "  3. Value  : your Hugging Face access token\\n"
         "  4. Tick the checkbox beside HF_TOKEN to attach it to the session\\n\\n"
-        "There is nothing at kaggle.com/settings/secrets - that URL is a 404."
+        "There is nothing at kaggle.com/settings/secrets - that URL is a 404.\\n"
+        "Do not paste the token into a cell; notebook source is public."
     )
 
 from huggingface_hub import login, whoami
