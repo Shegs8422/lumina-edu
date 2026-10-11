@@ -35,6 +35,7 @@ import json
 import os
 import random
 import re
+from collections.abc import Mapping
 
 import torch
 from datasets import Dataset
@@ -216,19 +217,37 @@ def build_examples(records, distilled=None):
     return out
 
 
-def to_chat_text(tokenizer, examples):
-    """Render with N-ATLaS's OWN chat template - not Alpaca."""
+def to_chat_text(examples, tokenizer):
+    """Render with N-ATLaS's OWN chat template - not Alpaca.
+
+    Parameter order matters, and so does the batch shape.
+
+    `Dataset.map(fn, batched=True, fn_kwargs=...)` passes the batch as the
+    FIRST POSITIONAL argument with fn_kwargs as keywords, so declaring this
+    as (tokenizer, examples) collided with the `tokenizer=` keyword.
+
+    With batched=True the batch is also a DICT OF COLUMNS
+    ({"messages": [...], "task": [...]}), not a list of rows. Iterating it
+    directly yields column-name strings, so we read the column explicitly.
+    """
+    # datasets hands us a LazyBatch, which implements Mapping but is NOT a
+    # dict subclass, so isinstance(x, dict) is False. Test for Mapping.
+    if isinstance(examples, Mapping):
+        messages_column = examples["messages"]
+    else:
+        messages_column = [ex["messages"] for ex in examples]
+
     texts = []
-    for ex in examples:
+    for messages in messages_column:
         try:
             text = tokenizer.apply_chat_template(
-                ex["messages"], tokenize=False, add_generation_prompt=False
+                messages, tokenize=False, add_generation_prompt=False
             )
         except TypeError:
             # Some builds require the date_string argument the model card uses.
             from datetime import datetime
             text = tokenizer.apply_chat_template(
-                ex["messages"], tokenize=False, add_generation_prompt=False,
+                messages, tokenize=False, add_generation_prompt=False,
                 date_string=datetime.now().strftime("%d %b %Y"),
             )
         texts.append(text)
