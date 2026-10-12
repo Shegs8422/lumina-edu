@@ -56,9 +56,11 @@ TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj",
                   "gate_proj", "up_proj", "down_proj"]
 SEED = 3407
 
-DATA_DIR = "data/processed"
+DATA_DIR = os.environ.get("LUMINA_DATA_DIR", "data/processed")
 ADAPTER_PATH = "lumina-edu-natlas-adapter-powered-by-awarri"
-OUT_DIR = "outputs"
+OUT_DIR = os.environ.get("LUMINA_OUT_DIR", "/kaggle/working/outputs"
+                         if os.path.isdir("/kaggle/working") else "outputs")
+EPOCHS = float(os.environ.get("LUMINA_EPOCHS", "2"))
 
 
 def resolve_output_dir(preferred):
@@ -254,8 +256,34 @@ def to_chat_text(examples, tokenizer):
     return {"text": texts}
 
 
+def ensure_hf_login():
+    """Authenticate to the Hub from inside main().
+
+    N-ATLaS is gated, so an unauthenticated run dies at model load with an
+    opaque 401. Doing this here makes the script self-sufficient and turns a
+    silent download failure into a clear message.
+    """
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        try:
+            from kaggle_secrets import UserSecretsClient
+            token = UserSecretsClient().get_secret("HF_TOKEN")
+        except Exception:
+            token = None
+    if not token:
+        raise SystemExit(
+            "HF_TOKEN not found. N-ATLaS is a GATED repo.\n"
+            "Add-ons -> Secrets -> Add new secret -> label HF_TOKEN, then "
+            "tick its checkbox. Do not paste a token into a cell: notebook "
+            "source is public.")
+    from huggingface_hub import login, whoami
+    login(token=token, add_to_git_credential=False)
+    print("HF auth:", whoami()["name"])
+
+
 def main():
     from unsloth import FastLanguageModel
+    ensure_hf_login()
 
     set_seed()
     print(f"Loading {MODEL_ID} ...")
@@ -342,7 +370,7 @@ def main():
             per_device_train_batch_size=2,
             gradient_accumulation_steps=8,
             warmup_steps=10,
-            num_train_epochs=2,
+            num_train_epochs=EPOCHS,
             learning_rate=2e-4,
             fp16=not supports_bf16,
             bf16=supports_bf16,
@@ -363,21 +391,55 @@ def main():
 
     print(f"precision: {'bf16' if supports_bf16 else 'fp16'} "
           f"(T4 does not support bfloat16, so fp16 is correct here)")
+    print(f"epochs={EPOCHS} | steps≈{len(train_ds)} examples | "
+          f"effective batch={2 * 8 * max(n_gpu,1)}")
     print("Starting training ...")
     trainer.train()
 
+    # ---- Save, defensively. ----
+    # This is the last thing that runs after hours of training, so a failure
+    # here wastes the entire run. Try the Unsloth merged-lora save first, and
+    # fall back to the plain PEFT adapter save if it raises.
     adapter_out = resolve_output_dir(ADAPTER_PATH)
+    os.makedirs(adapter_out, exist_ok=True)
+    print(f"\nSaving adapter to {adapter_out}")
+
+    saved = False
+    try:
+        model.save_pretrained_merged(adapter_out, tokenizer, save_method="lora")
+        saved = True
+        print("  saved via save_pretrained_merged")
+    except Exception as exc:
+        print(f"  save_pretrained_merged FAILED: {type(exc).__name__}: {exc}")
+
+    if not saved:
+        try:
+            model.save_pretrained(adapter_out)
+            saved = True
+            print("  saved via model.save_pretrained (PEFT adapter fallback)")
+        except Exception as exc:
+            print(f"  model.save_pretrained ALSO FAILED: {type(exc).__name__}: {exc}")
+
     os.makedirs(OUT_DIR, exist_ok=True)
-    print(f"Saving adapter to {adapter_out}")
-    model.save_pretrained_merged(adapter_out, tokenizer, save_method="lora")
     with open(os.path.join(OUT_DIR, "adapter_path.txt"), "w") as fh:
         fh.write(adapter_out)
 
-    if HF_REPO_ID:
-        print(f"Pushing to Hugging Face: {HF_REPO_ID}")
-        model.push_to_hub_merged(HF_REPO_ID, tokenizer, save_method="lora")
+    if saved:
+        files = os.listdir(adapter_out)
+        print(f"  adapter contains {len(files)} files: {files[:8]}")
+        if not any("adapter_config" in f for f in files):
+            print("  WARNING: no adapter_config.json - PeftModel reload may fail")
+    else:
+        print("  ERROR: adapter was NOT saved. Copy outputs/ checkpoints manually.")
 
-    print(f"\nDone. Adapter: {ADAPTER_PATH}")
+    if HF_REPO_ID:
+        try:
+            print(f"Pushing to Hugging Face: {HF_REPO_ID}")
+            model.push_to_hub_merged(HF_REPO_ID, tokenizer, save_method="lora")
+        except Exception as exc:
+            print(f"  push failed: {type(exc).__name__}: {exc}")
+
+    print(f"\nDone. Adapter: {adapter_out}")
     print(f"Attribution to reproduce in all outputs: {ATTRIBUTION}")
 
 
