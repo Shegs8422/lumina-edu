@@ -182,52 +182,69 @@ def main():
         "/content/evaluate_benchmark.py")
     import importlib
     import evaluate_benchmark as ev
-    import pandas as pd
 
-    base = {json.loads(l)["id"]: json.loads(l) for l in open(os.path.join(OUT_DIR, "base.jsonl"), encoding="utf-8")}
-    ft = {json.loads(l)["id"]: json.loads(l) for l in open(os.path.join(OUT_DIR, "finetuned.jsonl"), encoding="utf-8")}
+    def load_pass(tag):
+        path = os.path.join(OUT_DIR, f"{tag}.jsonl")
+        if not os.path.exists(path):
+            sys.exit(f"STOP: {path} not found - run '--pass {tag}' first.")
+        rows = {}
+        for line in open(path, encoding="utf-8"):
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            rows[r["id"]] = r
+        return rows
+
+    base = load_pass("base")
+    ft = load_pass("finetuned")
     common = [i for i in base if i in ft]
-    sysout(f"scoring {len(common)} paired samples")
+    sysout(f"base: {len(base)} | finetuned: {len(ft)} | paired: {len(common)}")
 
-    rows = []
+    if not common:
+        sys.exit("STOP: no paired sample IDs - the two passes share nothing.")
+
+    # ev.score() zips positionally, so all three lists must be built in the
+    # same order. The benchmark records carry "lang"; score() expects
+    # "target_language", so map it here rather than changing the record format.
+    items, base_out, ft_out = [], [], []
     for i in common:
-        b, f = base[i], ft[i]
-        ref = b["reference"]
-        rows.append({
-            "sample_id": i, "target_language": b["lang"],
-            "base_rouge1": round(ev.scorer.score(ref, b["completion"])["rouge1"].fmeasure, 4),
-            "base_rougeL": round(ev.scorer.score(ref, b["completion"])["rougeL"].fmeasure, 4),
-            "ft_rouge1": round(ev.scorer.score(ref, f["completion"])["rouge1"].fmeasure, 4),
-            "ft_rougeL": round(ev.scorer.score(ref, f["completion"])["rougeL"].fmeasure, 4),
-            "base_chrf": round(ev.chrf(b["completion"], ref), 4),
-            "ft_chrf": round(ev.chrf(f["completion"], ref), 4),
-            "base_attribution": ev.attribution_hit(b["completion"], b["institution"]),
-            "ft_attribution": ev.attribution_hit(f["completion"], f["institution"]),
+        b = base[i]
+        items.append({
+            "id": i,
+            "target_language": b["lang"],
+            "reference": b["reference"],
+            "institution": b.get("institution", ""),
         })
-    df = pd.DataFrame(rows)
+        base_out.append(b["completion"])
+        ft_out.append(ft[i]["completion"])
+
+    df = ev.score(items, base_out, ft_out)
     df.to_csv(os.path.join(OUT_DIR, "naic_benchmark_results.csv"), index=False)
 
-    summary = {"total_samples": len(df)}
-    for k in ["rouge1", "rougeL", "chrf"]:
-        summary[f"base_mean_{k}"] = round(float(df[f"base_{k}"].mean()), 4)
-        summary[f"finetuned_mean_{k}"] = round(float(df[f"ft_{k}"].mean()), 4)
-    for c, n in (("base_attribution", "base"), ("ft_attribution", "finetuned")):
-        sub = df[df[c].notna()]
-        summary[f"{n}_grounding_accuracy"] = round(float(sub[c].mean()), 4) if len(sub) else None
-    per = {}
-    for lang, g in df.groupby("target_language"):
-        m = "rougeL" if lang == "English" else "chrf"
-        per[lang] = {"n": int(len(g)), "headline_metric": m,
-                     "headline_base": round(float(g[f"base_{m}"].mean()), 4),
-                     "headline_finetuned": round(float(g[f"ft_{m}"].mean()), 4)}
-    summary["by_language"] = per
-    with open(os.path.join(OUT_DIR, "naic_benchmark_summary.json"), "w", encoding="utf-8") as fh:
+    summary = ev.summarise(df)
+    with open(os.path.join(OUT_DIR, "naic_benchmark_summary.json"), "w",
+              encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
+
     sysout("SCORING COMPLETE")
-    sysout(json.dumps({k: v for k, v in summary.items() if k != "by_language"}, indent=2))
-    for lang, d in per.items():
-        sysout(f"  {lang:<9} n={d['n']:<4} {d['headline_metric']:<6} "
-               f"{d['headline_base']} -> {d['headline_finetuned']}")
+    sysout("")
+    sysout(f"  paired samples : {summary['total_samples']}")
+    for metric in ("rouge1", "rougeL", "chrf"):
+        b = summary.get(f"base_mean_{metric}")
+        f = summary.get(f"finetuned_mean_{metric}")
+        if b is None or f is None:
+            continue
+        sysout(f"  {metric:<8} {b:>8.4f} -> {f:>8.4f}  ({f - b:+.4f})")
+    bg = summary.get("base_grounding_accuracy")
+    fg = summary.get("finetuned_grounding_accuracy")
+    if bg is not None and fg is not None:
+        sysout(f"  {'ground':<8} {bg:>8.4f} -> {fg:>8.4f}  ({fg - bg:+.4f})")
+    sysout("")
+    sysout("  per-language")
+    for lang, d in summary["by_language"].items():
+        delta = d["headline_finetuned"] - d["headline_base"]
+        sysout(f"    {lang:<9} n={d['n']:<4} {d['headline_metric']:<6} "
+               f"{d['headline_base']} -> {d['headline_finetuned']}  ({delta:+.4f})")
 
 
 if __name__ == "__main__":
