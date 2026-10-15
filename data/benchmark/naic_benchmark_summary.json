@@ -1,0 +1,83 @@
+{
+  "_provenance": "Transcribed from the completed 610-sample run in scripts/run_benchmark_resumable.py --score on 2026-10-15. Committed so the model card can be regenerated without a GPU. Per-sample rows are in naic_benchmark_results.csv; all 1,220 completions are published at https://huggingface.co/datasets/lanre-segun/lumina-edu-benchmark-results",
+
+  "total_samples": 610,
+  "paired_samples": 610,
+
+  "base_mean_rouge1": 0.1437,
+  "finetuned_mean_rouge1": 0.7808,
+  "base_mean_rougeL": 0.1061,
+  "finetuned_mean_rougeL": 0.7793,
+  "base_mean_chrf": 0.0833,
+  "finetuned_mean_chrf": 0.7799,
+
+  "base_grounding_accuracy": 0.0098,
+  "finetuned_grounding_accuracy": 0.0344,
+
+  "by_language": {
+    "English": {
+      "n": 153,
+      "headline_metric": "rougeL",
+      "headline_base": 0.2806,
+      "headline_finetuned": 0.8156
+    },
+    "Hausa": {
+      "n": 152,
+      "headline_metric": "chrf",
+      "headline_base": 0.0236,
+      "headline_finetuned": 0.8317
+    },
+    "Igbo": {
+      "n": 152,
+      "headline_metric": "chrf",
+      "headline_base": 0.0285,
+      "headline_finetuned": 0.7311
+    },
+    "Yoruba": {
+      "n": 153,
+      "headline_metric": "chrf",
+      "headline_base": 0.0204,
+      "headline_finetuned": 0.7403
+    }
+  },
+
+  "language_regression": {
+    "_note": "Primary finding. Share of prompts requesting a Nigerian language that were answered in one, detected by presence of non-ASCII characters. Base N-ATLaS honoured these prompts; the English-only-trained adapter did not.",
+    "_caveat": "Language is detected by non-ASCII presence, a proxy that miscounts undiacritised responses as English and so understates the fine-tuned model. Prompt language rotates by record index rather than a verified per-record label, so buckets are non-English prompt groups rather than confirmed per-language targets.",
+    "non_english_prompts": 457,
+    "base_rate": 0.858,
+    "finetuned_rate": 0.357,
+    "by_requested_language": {
+      "Igbo": {"n": 152, "base": 1.0, "finetuned": 0.296},
+      "Yoruba": {"n": 153, "base": 1.0, "finetuned": 0.366},
+      "Hausa": {"n": 152, "base": 0.572, "finetuned": 0.408}
+    }
+  },
+
+  "metric_validity": {
+    "_note": "Why ROUGE/chrF are not headlined. The benchmark reference is the source abstract, so reproducing it scores highly.",
+    "completions_above_rougeL_0_90": 272,
+    "of_total": 610,
+    "median_finetuned_rougeL": 0.8699,
+    "median_finetuned_rougeL_excluding_outliers": 0.7432,
+    "max_finetuned_rougeL": 1.0,
+    "mean_completion_chars": 1015,
+    "empty_completions": 0,
+    "repetitive_completions": 1,
+    "completions_under_80_chars": 13
+  },
+
+  "training": {
+    "train_loss": 1.6749,
+    "validation_loss": 1.6047,
+    "delta_pct": -4.2,
+    "steps": 100,
+    "dev_split_size": 200,
+    "trainable_parameters": 41943040,
+    "total_parameters": 8072204288,
+    "trainable_pct": 0.52,
+    "adapter_bytes": 167830000
+  },
+
+  "metric_note": "ROUGE uses an English stemmer and is unreliable for Yoruba/Hausa/Igbo; chrF is the reported metric for those languages. Neither is headlined here, because the benchmark reference is the source abstract and 272/610 completions exceed 0.90 ROUGE-L, indicating extraction-by-echo rather than summarisation."
+}
