@@ -45,16 +45,72 @@ def load(path, default=None):
         return default
 
 
+def training_block(tr):
+    if not tr:
+        return ""
+    return (
+        f"Training loss **{tr['train_loss']}** -> validation loss "
+        f"**{tr['validation_loss']}** ({tr['delta_pct']:+.1f}%) on a "
+        f"{tr['dev_split_size']}-record held-out dev split. Loss was still falling at "
+        f"the {tr['steps']}-step compute ceiling, so the run was compute-limited "
+        f"rather than data-limited.\n\n"
+        f"Adaptation cost: **{tr['trainable_parameters']:,}** trainable parameters of "
+        f"{tr['total_parameters']:,} (**{tr['trainable_pct']}%**), producing a "
+        f"{tr['adapter_bytes'] / 1e6:.2f} MB adapter.")
+
+
+def regression_block(summary):
+    """The primary finding: the adapter lost the base model's cross-lingual ability."""
+    reg = (summary or {}).get("language_regression")
+    if not reg:
+        return ""
+
+    rows = reg.get("by_requested_language") or {}
+    lines = [
+        "## Primary finding: the adapter regressed to English",
+        "",
+        "The clearest result this benchmark produced is negative, and we report it",
+        "rather than burying it.",
+        "",
+        "The adapter was trained on English-only extractive targets. The consequence",
+        "is measurable: it stopped honouring Yoruba, Hausa and Igbo prompts. Of the",
+        f"**{reg['non_english_prompts']}** benchmark prompts requesting a Nigerian",
+        "language, the proportion answered in one:",
+        "",
+        "| Language requested | n | Base N-ATLaS | Lumina-Edu | Change |",
+        "|---|---|---|---|---|",
+    ]
+    for lang, d in rows.items():
+        delta = (d["finetuned"] - d["base"]) * 100
+        lines.append(f"| {lang} | {d['n']} | {d['base']:.1%} | {d['finetuned']:.1%} "
+                     f"| **{delta:+.1f} pts** |")
+    lines += [
+        f"| **Overall** | **{reg['non_english_prompts']}** | **{reg['base_rate']:.1%}** "
+        f"| **{reg['finetuned_rate']:.1%}** "
+        f"| **{(reg['finetuned_rate'] - reg['base_rate']) * 100:+.1f} pts** |",
+        "",
+        "This is **language collapse from monolingual supervised fine-tuning**: a narrow",
+        "English target set overwrites the base model's cross-lingual instruction",
+        "following rather than adding to it. N-ATLAS advertises Yoruba, Hausa and Igbo",
+        "support, so this is a regression against a capability the base model had.",
+    ]
+    return "\n".join(lines)
+
+
 def results_block(summary):
     if not summary:
         return ("## Benchmark results\n\n"
                 "**Not available at time of publication.** The benchmark run had not\n"
                 "completed when this card was generated. No result is claimed here.\n")
 
+    mv = summary.get("metric_validity") or {}
     lines = ["## Benchmark results", "",
              f"Held-out set: **{summary.get('total_samples', 'n/a')} real abstracts**, "
              "disjoint from training (0 ID overlap, max train/benchmark cosine 0.684).",
-             "", "| Metric | Base N-ATLaS | Lumina-Edu | Delta |",
+             "Both models were run over identical prompts with greedy decoding "
+             "(`do_sample=False`).",
+             "", "### Automatic metrics — reported, not headlined", "",
+             "| Metric | Base N-ATLaS | Lumina-Edu | Delta |",
              "|---|---|---|---|"]
 
     for label, key in (("ROUGE-1", "rouge1"), ("ROUGE-L", "rougeL"), ("chrF", "chrf")):
@@ -70,12 +126,33 @@ def results_block(summary):
         lines.append(f"| Institution attribution accuracy | {bg:.4f} | {fg:.4f} | "
                      f"{fg - bg:+.4f} |")
 
+    if mv:
+        lines += [
+            "",
+            "> **These scores should not be read as an improvement.**",
+            ">",
+            "> The benchmark reference *is* the source abstract, so a model that",
+            "> reproduces the abstract scores highly against it. "
+            f"**{mv['completions_above_rougeL_0_90']} of {mv['of_total']}** completions",
+            f"> exceed 0.90 ROUGE-L (median {mv['median_finetuned_rougeL']}, maximum",
+            f"> {mv['max_finetuned_rougeL']:.2f}), and mean completion length",
+            f"> ({mv['mean_completion_chars']} chars) tracks the reference. That is the",
+            "> signature of extraction-by-echo, not summarisation.",
+            ">",
+            "> Degenerate output is ruled out: "
+            f"{mv['empty_completions']} empty completions,",
+            f"> {mv['repetitive_completions']} repetitive, "
+            f"{mv['completions_under_80_chars']} under 80 characters.",
+            ">",
+            "> ROUGE also applies an English stemmer and is unreliable for Yoruba,",
+            "> Hausa and Igbo, where chrF is the appropriate metric. The base model's",
+            "> low ROUGE further flatters the comparison — part of the apparent gain is",
+            "> the base model rambling.",
+        ]
+
     by_lang = summary.get("by_language") or {}
     if by_lang:
         lines += ["", "### Per-language", "",
-                  "ROUGE uses an English stemmer and is unreliable for Yoruba, Hausa\n"
-                  "and Igbo (it scores 0.000 cross-language), so chrF is the reported\n"
-                  "metric for those languages.", "",
                   "| Language | n | Metric | Base | Lumina-Edu | Delta |",
                   "|---|---|---|---|---|---|"]
         for lang, d in by_lang.items():
@@ -84,15 +161,24 @@ def results_block(summary):
                 f"{d.get('headline_base')} | {d.get('headline_finetuned')} | "
                 f"{d.get('headline_finetuned', 0) - d.get('headline_base', 0):+.4f} |")
 
-    lines += ["", "All figures come from real generation: both models were run over the",
-              "same prompts with greedy decoding, and every completion is written to",
-              "`naic_benchmark_results.csv` for independent audit."]
+    lines += ["", "All figures come from real generation. Every completion is published",
+              "for independent audit:",
+              "",
+              "<https://huggingface.co/datasets/lanre-segun/lumina-edu-benchmark-results>",
+              "",
+              "Full analysis: <https://github.com/Shegs8422/lumina-edu/blob/main/RESULTS.md>"]
     return "\n".join(lines)
 
 
 def build(summary, curation, adapter):
     corpus = (curation or {}).get("after_near_dedupe", "n/a")
     bench_n = (summary or {}).get("total_samples", (curation or {}).get("benchmark_size", "n/a"))
+
+    results = results_block(summary)
+    regression = regression_block(summary) or (
+        "Benchmark not yet run; no comparative result is claimed.")
+    training = training_block((summary or {}).get("training"))
+    scope = SCOPE_NOTE
 
     return f"""---
 license: other
@@ -132,6 +218,27 @@ literature:
 The attribution task targets the project's stated failure mode: generic models
 naming plausible but false Nigerian institutions.
 
+## What we measured, and what it means
+
+The benchmark was run end to end: 610 held-out abstracts, base and fine-tuned
+over identical prompts, greedy decoding, all 1,220 completions published.
+
+**Two of the three findings are negative, and we report them as the result.**
+
+1. **Training converged** — validation loss improved 4.2%, still falling at the
+   compute ceiling.
+2. **The adapter regressed to English** — it stopped honouring Yoruba, Hausa and
+   Igbo prompts. This is the clearest signal the benchmark produced.
+3. **Institution grounding is unsolved** — 3.4% against chance, because ~99% of
+   the corpus is a single institution.
+
+The favourable-looking ROUGE and chrF numbers are reported below but explicitly
+not headlined: the benchmark reference is the source abstract, so the metric
+rewards reproducing it. We would rather present a result that survives scrutiny
+than one that does not.
+
+{regression}
+
 ## Training configuration
 
 | | |
@@ -145,7 +252,9 @@ naming plausible but false Nigerian institutions.
 | Base model context | 8,092 tokens |
 | Hardware | Kaggle / Colab T4 |
 
-{SCOPE_NOTE}
+{training}
+
+{scope}
 
 ## Training data
 
@@ -159,20 +268,31 @@ Held-out benchmark: **{bench_n} records**.
 
 Full provenance and the curation audit: `DATASET_CARD.md`.
 
-{results_block(summary)}
+{results}
 
 ## Intended use
 
 Summarising and grounding Nigerian academic literature, and exploring
 multilingual explanation of research findings.
 
+**This adapter should not be used for multilingual work.** It measurably
+degrades the base model's Yoruba, Hausa and Igbo instruction following. Use
+base N-ATLAS for those languages.
+
 ## Limitations
 
+- **Multilingual ability was lost.** The share of Nigerian-language prompts
+  answered in a Nigerian language fell from 85.8% to 35.7%. This is the primary
+  measured weakness of this adapter.
+- **The model reproduces abstracts rather than summarising them.** 272/610
+  completions exceed 0.90 ROUGE-L against the source abstract. Do not treat this
+  adapter as a summariser.
 - **Single-dominant institution.** ~99% University of Ibadan, so attribution
   generalises poorly to other Nigerian universities.
 - **Abstracts only.** Findings stated solely in a results section are absent.
-- **No multilingual targets in this adapter.** The translation task was
-  omitted because self-distillation did not complete.
+- **No multilingual training targets in this adapter.** The translation task was
+  omitted because self-distillation did not complete, which is the direct cause
+  of the regression above.
 - **ROUGE is unreliable for Yoruba/Hausa/Igbo** (English stemmer); chrF is the
   appropriate metric there.
 - **Automatic metrics only.** No human evaluation was performed.
